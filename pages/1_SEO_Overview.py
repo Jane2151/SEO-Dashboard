@@ -1,0 +1,158 @@
+"""SEO Overview: current performance + trends, from the daily-synced data.
+
+Built around "SEO performance from this date to this date," not "which saved
+dataset should I open" — any date range is computed live from gsc_daily_*
+via SUM/SUM CTR and impression-weighted position (data_processing.metrics).
+Period comparison exists, but is opt-in, not the default view.
+"""
+
+import streamlit as st
+
+from charts import plotly_charts
+from data_processing import metrics
+from database import change_log_repository, gsc_daily_repository
+from database.db_setup import initialize_database
+from utils.date_ranges import select_range
+
+st.set_page_config(page_title="SEO Overview", layout="wide")
+initialize_database()
+st.title("SEO Overview")
+
+latest_synced_date = gsc_daily_repository.get_latest_synced_date()
+if latest_synced_date is None:
+    st.info("No synced data yet. Go to the main page and click 'Sync GSC Data' to get started.")
+    st.stop()
+
+earliest_synced_date = gsc_daily_repository.get_earliest_synced_date()
+latest_complete_date = gsc_daily_repository.get_latest_complete_date()
+
+range_start, range_end = select_range(latest_synced_date, earliest_synced_date, key_prefix="overview", latest_complete_date=latest_complete_date)
+
+if range_start > range_end:
+    st.error("Start date must be before end date.")
+    st.stop()
+
+st.caption(f"Showing **{range_start} to {range_end}** — synced data available from {earliest_synced_date} to {latest_synced_date}.")
+
+days_stale = metrics.days_since(latest_synced_date)
+if days_stale > 3:
+    st.warning(f"Last synced data is from {latest_synced_date} ({days_stale} days ago). Sync again on the main page for fresher numbers.")
+
+current_daily = gsc_daily_repository.get_daily_overall_range(range_start, range_end)
+
+if current_daily.empty:
+    st.info("No data for this date range yet.")
+    st.stop()
+
+current_summary = {
+    "clicks": metrics.total_clicks(current_daily),
+    "impressions": metrics.total_impressions(current_daily),
+    "ctr": metrics.average_ctr(current_daily),
+    "position": metrics.average_position(current_daily),
+}
+
+compare_enabled = st.checkbox("Compare with previous period")
+
+previous_summary = None
+if compare_enabled:
+    previous_start, previous_end = metrics.previous_equivalent_period(range_start, range_end)
+    previous_daily = gsc_daily_repository.get_daily_overall_range(previous_start, previous_end)
+    if previous_daily.empty:
+        st.info(f"No data available for the previous period ({previous_start} to {previous_end}) to compare against.")
+    else:
+        previous_summary = {
+            "clicks": metrics.total_clicks(previous_daily),
+            "impressions": metrics.total_impressions(previous_daily),
+            "ctr": metrics.average_ctr(previous_daily),
+            "position": metrics.average_position(previous_daily),
+        }
+        st.caption(f"Comparing against **{previous_start} to {previous_end}**.")
+
+col1, col2, col3, col4 = st.columns(4)
+
+col1.metric(
+    "Total Clicks",
+    f"{current_summary['clicks']:,}",
+    metrics.format_before_after_delta(previous_summary["clicks"], current_summary["clicks"]) if previous_summary else None,
+)
+col2.metric(
+    "Total Impressions",
+    f"{current_summary['impressions']:,}",
+    metrics.format_before_after_delta(previous_summary["impressions"], current_summary["impressions"]) if previous_summary else None,
+)
+col3.metric(
+    "Average CTR",
+    f"{current_summary['ctr'] * 100:.2f}%",
+    metrics.format_ctr_delta(previous_summary["ctr"], current_summary["ctr"]) if previous_summary else None,
+)
+col4.metric(
+    "Average Position",
+    f"{current_summary['position']:.1f}",
+    metrics.format_before_after_delta(previous_summary["position"], current_summary["position"], lower_is_better=True) if previous_summary else None,
+    help="Lower is better. A positive delta here means position improved.",
+)
+
+st.subheader("Trends")
+st.caption(
+    "Markers show SEO changes recorded in the Change Log — hover one for details. "
+    "This is a visual reference only: it does not mean the change caused what happened afterward."
+)
+
+changes_in_range = change_log_repository.get_changes_in_range(range_start, range_end)
+grouped_changes = []
+if not changes_in_range.empty:
+    for change_date, group in changes_in_range.groupby("change_date"):
+        entries = [{"category": row.category, "description": row.description} for row in group.itertuples(index=False)]
+        grouped_changes.append((change_date, entries))
+
+clicks_tab, impressions_tab, position_tab = st.tabs(["Clicks", "Impressions", "Average Position"])
+
+with clicks_tab:
+    st.plotly_chart(
+        plotly_charts.trend_line_chart_with_change_markers(
+            current_daily["date"], current_daily["clicks"], "Clicks Over Time", "Clicks", grouped_changes
+        ),
+        width="stretch",
+    )
+
+with impressions_tab:
+    st.plotly_chart(
+        plotly_charts.trend_line_chart_with_change_markers(
+            current_daily["date"], current_daily["impressions"], "Impressions Over Time", "Impressions", grouped_changes
+        ),
+        width="stretch",
+    )
+
+with position_tab:
+    st.plotly_chart(
+        plotly_charts.trend_line_chart_with_change_markers(
+            current_daily["date"], current_daily["position"], "Average Position Over Time", "Position", grouped_changes, invert_y=True
+        ),
+        width="stretch",
+    )
+    st.caption("Axis is inverted so an upward line always means better rankings.")
+
+st.subheader("Breakdowns")
+
+page_tab, device_tab, country_tab = st.tabs(["Top Pages", "Devices", "Countries"])
+
+with page_tab:
+    page_breakdown = gsc_daily_repository.get_page_breakdown(range_start, range_end)
+    if page_breakdown.empty:
+        st.info("No page-level data for this range.")
+    else:
+        st.dataframe(page_breakdown, width="stretch", hide_index=True)
+
+with device_tab:
+    device_breakdown = gsc_daily_repository.get_device_breakdown(range_start, range_end)
+    if device_breakdown.empty:
+        st.info("No device-level data for this range.")
+    else:
+        st.dataframe(device_breakdown, width="stretch", hide_index=True)
+
+with country_tab:
+    country_breakdown = gsc_daily_repository.get_country_breakdown(range_start, range_end)
+    if country_breakdown.empty:
+        st.info("No country-level data for this range.")
+    else:
+        st.dataframe(country_breakdown, width="stretch", hide_index=True)
