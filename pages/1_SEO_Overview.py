@@ -12,10 +12,13 @@ from charts import plotly_charts
 from data_processing import metrics
 from database import change_log_repository, gsc_daily_repository
 from database.db_setup import initialize_database
+from utils.chart_style import inject_chart_transition_css
 from utils.date_ranges import select_range
+from utils.text_style import styled_caption
 
 st.set_page_config(page_title="SEO Overview", layout="wide")
 initialize_database()
+inject_chart_transition_css()
 st.title("SEO Overview")
 
 latest_synced_date = gsc_daily_repository.get_latest_synced_date()
@@ -32,7 +35,7 @@ if range_start > range_end:
     st.error("Start date must be before end date.")
     st.stop()
 
-st.caption(f"Showing **{range_start} to {range_end}** — synced data available from {earliest_synced_date} to {latest_synced_date}.")
+styled_caption(f"Showing {range_start} to {range_end} — synced data available from {earliest_synced_date} to {latest_synced_date}.")
 
 days_stale = metrics.days_since(latest_synced_date)
 if days_stale > 3:
@@ -105,28 +108,109 @@ if not changes_in_range.empty:
         entries = [{"category": row.category, "description": row.description} for row in group.itertuples(index=False)]
         grouped_changes.append((change_date, entries))
 
-clicks_tab, impressions_tab, position_tab = st.tabs(["Clicks", "Impressions", "Average Position"])
+# Gridlines are drawn with an explicit color (needed to make the two
+# y-axes' gridlines share the same rows — see clicks_impressions_dual_axis_chart),
+# so they can't rely on Streamlit's own theme CSS to stay visible. Reading
+# the active theme here picks a matching tint instead of a fixed color.
+is_dark_theme = st.context.theme.type == "dark"
 
-with clicks_tab:
-    st.plotly_chart(
-        plotly_charts.trend_line_chart_with_change_markers(
-            current_daily["date"], current_daily["clicks"], "Clicks Over Time", "Clicks", grouped_changes
-        ),
-        width="stretch",
-    )
+shared_x_range = [current_daily["date"].min(), current_daily["date"].max()]
 
-with impressions_tab:
-    st.plotly_chart(
-        plotly_charts.trend_line_chart_with_change_markers(
-            current_daily["date"], current_daily["impressions"], "Impressions Over Time", "Impressions", grouped_changes
-        ),
-        width="stretch",
+clicks_impressions_tab, position_tab = st.tabs(["Clicks & Impressions", "Average Position"])
+
+with clicks_impressions_tab:
+    if "show_clicks_cb" not in st.session_state:
+        st.session_state.show_clicks_cb = True
+        st.session_state.show_impressions_cb = False
+    if "compare_mode_toggle" not in st.session_state:
+        st.session_state.compare_mode_toggle = False
+
+    # Session state for a keyed widget already reflects its new value by
+    # the time the script reruns (before that widget's own line executes),
+    # so this read of compare_mode_toggle picks up a just-flipped toggle in
+    # the same rerun that draws the checkboxes below — forcing both to
+    # appear checked immediately rather than one rerun later.
+    compare_mode = st.session_state.compare_mode_toggle
+    if compare_mode:
+        st.session_state.show_clicks_cb = True
+        st.session_state.show_impressions_cb = True
+    elif st.session_state.show_clicks_cb and st.session_state.show_impressions_cb:
+        # Both are only ever True together as a leftover from Compare mode
+        # (the checkboxes' own on_change callbacks never allow that
+        # otherwise) — collapse back to a single selection now that Compare
+        # is off, so the checked box always matches the chart being shown.
+        st.session_state.show_impressions_cb = False
+
+    def _uncheck_impressions():
+        if st.session_state.show_clicks_cb:
+            st.session_state.show_impressions_cb = False
+
+    def _uncheck_clicks():
+        if st.session_state.show_impressions_cb:
+            st.session_state.show_clicks_cb = False
+
+    checkbox_col1, checkbox_col2, toggle_col = st.columns([1, 1, 1])
+    show_clicks = checkbox_col1.checkbox(
+        "Clicks", key="show_clicks_cb", on_change=_uncheck_impressions, disabled=compare_mode
     )
+    show_impressions = checkbox_col2.checkbox(
+        "Impressions", key="show_impressions_cb", on_change=_uncheck_clicks, disabled=compare_mode
+    )
+    toggle_col.toggle("Compare", key="compare_mode_toggle")
+
+    if compare_mode:
+        st.plotly_chart(
+            plotly_charts.clicks_impressions_dual_axis_chart(
+                current_daily["date"],
+                current_daily["clicks"],
+                current_daily["impressions"],
+                changes=grouped_changes,
+                x_range=shared_x_range,
+                dark_mode=is_dark_theme,
+            ),
+            width="stretch",
+        )
+    elif show_clicks:
+        st.plotly_chart(
+            plotly_charts.trend_line_chart_with_change_markers(
+                current_daily["date"],
+                current_daily["clicks"],
+                "Clicks Over Time",
+                "Clicks",
+                grouped_changes,
+                x_range=shared_x_range,
+                dark_mode=is_dark_theme,
+                line_color=plotly_charts.CLICKS_COLOR,
+            ),
+            width="stretch",
+        )
+    elif show_impressions:
+        st.plotly_chart(
+            plotly_charts.trend_line_chart_with_change_markers(
+                current_daily["date"],
+                current_daily["impressions"],
+                "Impressions Over Time",
+                "Impressions",
+                grouped_changes,
+                x_range=shared_x_range,
+                dark_mode=is_dark_theme,
+                line_color=plotly_charts.CLICKS_COLOR,
+            ),
+            width="stretch",
+        )
+    else:
+        st.info("Select Clicks or Impressions to display a chart.")
 
 with position_tab:
     st.plotly_chart(
         plotly_charts.trend_line_chart_with_change_markers(
-            current_daily["date"], current_daily["position"], "Average Position Over Time", "Position", grouped_changes, invert_y=True
+            current_daily["date"],
+            current_daily["position"],
+            "Average Position Over Time",
+            "Position",
+            grouped_changes,
+            invert_y=True,
+            dark_mode=is_dark_theme,
         ),
         width="stretch",
     )

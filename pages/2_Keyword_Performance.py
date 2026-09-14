@@ -108,13 +108,17 @@ else:
         with card_cols[position % len(card_cols)].container(border=True, key=card_key):
             st.markdown(f"**{keyword_row.keyword}**")
             if stats["impressions"] == 0:
-                st.caption("No data for this keyword in this range.")
+                pass
+            elif trend_label == "Not enough history":
+                # No metrics or caption here — there's no previous period to
+                # compare against yet, and the card's yellow color already
+                # signals the "not enough history" state on its own.
+                pass
             else:
                 st.metric("Impressions", f"{stats['impressions']:,}")
                 st.metric("Clicks", f"{stats['clicks']:,}")
                 st.metric("CTR", f"{stats['ctr'] * 100:.1f}%")
                 st.metric("Avg Position", f"{stats['position']:.1f}")
-                st.caption(f"Trend: {trend_label}")
 
 st.divider()
 st.subheader("Current User Search Queries")
@@ -148,9 +152,30 @@ else:
     display_df["CTR"] = (display_df["CTR"] * 100).round(2)
     display_df["Avg Position"] = display_df["Avg Position"].round(1)
 
+    # Sized to fit every row so the table itself never needs an internal
+    # scrollbar — 35px/row plus the header, matching st.dataframe's own
+    # row/header sizing, rather than the default fixed-height scroll box.
+    table_height = 38 + 35 * len(display_df) + 3
+
+    # Rows whose query text is exactly one of the target keywords get the
+    # same yellow used for the "not enough history" card, so a watched
+    # keyword's real query row is easy to spot in the full table below.
+    target_keyword_texts = {kw.strip().lower() for kw in target_keywords_df["keyword"]} if not target_keywords_df.empty else set()
+
+    def _highlight_target_keyword_rows(row):
+        is_target = row["Search Query"].strip().lower() in target_keyword_texts
+        style = "background-color: rgba(249, 168, 37, 0.35)" if is_target else ""
+        return [style] * len(row)
+
+    # Styler bypasses st.dataframe's own numeric formatting, so without an
+    # explicit format Avg Position renders as a raw float (e.g. "12.000000")
+    # instead of the "12.0" the plain DataFrame showed before.
+    styled_display_df = display_df.style.apply(_highlight_target_keyword_rows, axis=1).format({"Avg Position": "{:.1f}"})
+
     st.dataframe(
-        display_df,
+        styled_display_df,
         width="stretch",
         hide_index=True,
+        height=table_height,
         column_config={"CTR": st.column_config.NumberColumn("CTR", format="%.2f%%")},
     )

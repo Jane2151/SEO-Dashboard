@@ -5,12 +5,15 @@ reads entirely from the daily-level tables this page syncs into. There's no
 manual per-date-range dataset step anymore: connect once, then Sync.
 """
 
+from datetime import datetime
+
 import streamlit as st
 
 from data_processing import gsc_api_client, gsc_sync
 from database import gsc_daily_repository
 from database.db_setup import initialize_database
 from utils.constants import TARGET_SITE_URL
+from utils.text_style import styled_caption
 
 st.set_page_config(page_title="SEO Performance Dashboard", layout="wide")
 initialize_database()
@@ -60,15 +63,15 @@ st.caption(f"Property: **{site_url}**")
 
 st.header("Sync GSC Data")
 st.caption(
-    "Pulls daily performance into the database. The Overview page reads "
-    "directly from this — no separate dataset to create per date range."
+    "Pulls daily performance into the database. "
 )
 
 last_synced_at = gsc_daily_repository.get_last_sync_time()
 if last_synced_at:
-    st.caption(f"Last synced: **{last_synced_at}**")
+    formatted_sync_time = datetime.fromisoformat(last_synced_at).strftime("%b %d, %Y %I:%M %p")
+    styled_caption(f"Last synced: {formatted_sync_time}")
 else:
-    st.caption("Never synced yet. First sync backfills the last 90 days.")
+    styled_caption("Never synced yet. First sync backfills the last 90 days.")
 
 if st.button("Sync GSC Data", type="primary"):
     with st.spinner("Syncing daily data from Search Console..."):

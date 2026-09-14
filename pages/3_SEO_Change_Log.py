@@ -16,7 +16,7 @@ st.subheader("Record a New SEO Change")
 with st.form("change_log_form", clear_on_submit=True):
     change_date = st.date_input("Date", value=date.today())
     page_url = st.text_input("Page URL")
-    category = st.selectbox("Change category", CHANGE_CATEGORIES)
+    categories = st.multiselect("Change category", CHANGE_CATEGORIES)
     description = st.text_area("Description")
     target_keyword = st.text_input("Target keyword")
     notes = st.text_area("Notes")
@@ -25,7 +25,10 @@ with st.form("change_log_form", clear_on_submit=True):
 if submitted:
     if not page_url.strip():
         st.error("Page URL is required.")
+    elif not categories:
+        st.error("Select at least one change category.")
     else:
+        category = ", ".join(categories)
         change_log_repository.add_change(change_date, page_url.strip(), category, description, target_keyword, notes)
         if target_keyword.strip():
             target_keyword_repository.add_target_keyword(target_keyword.strip())
@@ -39,7 +42,18 @@ changes_df = change_log_repository.list_changes()
 if changes_df.empty:
     st.info("No SEO changes recorded yet.")
 else:
-    st.dataframe(changes_df, width="stretch", hide_index=True)
+    # Split the stored "A, B, C" string back into a list so st.dataframe
+    # renders each category as its own bordered tag instead of one long,
+    # truncated string.
+    display_df = changes_df.copy()
+    display_df["category"] = display_df["category"].apply(lambda c: [part.strip() for part in (c or "").split(",") if part.strip()])
+
+    st.dataframe(
+        display_df,
+        width="stretch",
+        hide_index=True,
+        column_config={"category": st.column_config.MultiselectColumn("Category", options=CHANGE_CATEGORIES, width=500)},
+    )
 
     st.subheader("Edit or Delete an Entry")
     selected_id = st.selectbox(
@@ -50,12 +64,13 @@ else:
 
     if selected_id is not None:
         entry = changes_df[changes_df["id"] == selected_id].iloc[0]
-        category_index = CHANGE_CATEGORIES.index(entry["category"]) if entry["category"] in CHANGE_CATEGORIES else 0
+        existing_categories = [c.strip() for c in (entry["category"] or "").split(",") if c.strip()]
+        default_categories = [c for c in existing_categories if c in CHANGE_CATEGORIES]
 
         with st.form("edit_change_form"):
             edit_date = st.date_input("Date", value=date.fromisoformat(entry["change_date"]))
             edit_page_url = st.text_input("Page URL", value=entry["page_url"])
-            edit_category = st.selectbox("Change category", CHANGE_CATEGORIES, index=category_index)
+            edit_categories = st.multiselect("Change category", CHANGE_CATEGORIES, default=default_categories)
             edit_description = st.text_area("Description", value=entry["description"] or "")
             edit_target_keyword = st.text_input("Target keyword", value=entry["target_keyword"] or "")
             edit_notes = st.text_area("Notes", value=entry["notes"] or "")
@@ -64,7 +79,10 @@ else:
         if save_edit:
             if not edit_page_url.strip():
                 st.error("Page URL is required.")
+            elif not edit_categories:
+                st.error("Select at least one change category.")
             else:
+                edit_category = ", ".join(edit_categories)
                 change_log_repository.update_change(
                     selected_id, edit_date, edit_page_url.strip(), edit_category, edit_description, edit_target_keyword, edit_notes
                 )
