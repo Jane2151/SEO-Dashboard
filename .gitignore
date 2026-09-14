@@ -6,6 +6,8 @@ venv/
 data/
 credentials/
 
+.streamlit/secrets.toml
+
 *.log
 
 .DS_Store

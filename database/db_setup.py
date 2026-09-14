@@ -1,28 +1,90 @@
-"""SQLite schema creation and connection handling.
+"""Shared Postgres (Supabase) schema creation and connection handling.
 
 Every repository function opens and closes its own connection rather than
 sharing one across the app, which keeps things safe with how Streamlit
-reruns scripts on every interaction.
+reruns scripts on every interaction. Local dev and every hosted deployment
+all point at the same Supabase database via the DATABASE_URL secret, so
+there's exactly one copy of the data no matter who's viewing it or where
+the app is running.
 """
 
-import sqlite3
-
-from utils.constants import DB_PATH
-
-
-def get_connection() -> sqlite3.Connection:
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    return conn
+import psycopg2
+import psycopg2.extras
+import streamlit as st
 
 
-def _ensure_column(conn: sqlite3.Connection, table: str, column: str, column_type: str) -> None:
+class _CursorProxy:
+    """Translates SQLite-style `?` placeholders to psycopg2's `%s` so the
+    repository modules can keep the SQL they already had, and forwards
+    everything else (fetchone, fetchall, description, ...) straight to the
+    real psycopg2 cursor."""
+
+    def __init__(self, cursor):
+        self._cursor = cursor
+
+    def execute(self, sql, params=None):
+        translated = sql.replace("?", "%s")
+        if params is None:
+            return self._cursor.execute(translated)
+        return self._cursor.execute(translated, params)
+
+    def executemany(self, sql, seq_of_params):
+        return self._cursor.executemany(sql.replace("?", "%s"), seq_of_params)
+
+    def __getattr__(self, name):
+        return getattr(self._cursor, name)
+
+
+class Connection:
+    """Wraps a psycopg2 connection so repository code can keep using
+    sqlite3-style conn.execute()/conn.executemany() with dict-like row
+    access (row["column"]) instead of every call site needing its own
+    cursor. `cursor()` — what pandas.read_sql_query calls internally —
+    returns plain tuple rows, since that's the shape pandas expects;
+    execute()/executemany() use dict rows instead, matching the
+    sqlite3.Row behavior the repository code was originally written
+    against.
+    """
+
+    def __init__(self, pg_conn):
+        self._conn = pg_conn
+
+    def cursor(self, *args, **kwargs):
+        return _CursorProxy(self._conn.cursor(*args, **kwargs))
+
+    def execute(self, sql, params=()):
+        cur = _CursorProxy(self._conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor))
+        cur.execute(sql, params)
+        return cur
+
+    def executemany(self, sql, seq_of_params):
+        cur = _CursorProxy(self._conn.cursor())
+        cur.executemany(sql, seq_of_params)
+        return cur
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        if exc_type is None:
+            self._conn.commit()
+        else:
+            self._conn.rollback()
+        self._conn.close()
+
+
+def get_connection() -> Connection:
+    return Connection(psycopg2.connect(st.secrets["DATABASE_URL"]))
+
+
+def _ensure_column(conn: Connection, table: str, column: str, column_type: str) -> None:
     """Add a column to an existing table if it isn't there yet. Lets a
     database created by an earlier version of the app pick up new columns
-    without the user having to delete and recreate it."""
-    existing_columns = {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+    without anyone having to drop and recreate it."""
+    existing_columns = {
+        row["column_name"]
+        for row in conn.execute("SELECT column_name FROM information_schema.columns WHERE table_name = ?", (table,)).fetchall()
+    }
     if column not in existing_columns:
         conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
 
@@ -33,7 +95,7 @@ def initialize_database() -> None:
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS gsc_datasets (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 label TEXT NOT NULL,
                 period_start TEXT NOT NULL,
                 period_end TEXT NOT NULL,
@@ -55,7 +117,7 @@ def initialize_database() -> None:
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS gsc_query_rows (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 dataset_id INTEGER NOT NULL REFERENCES gsc_datasets(id) ON DELETE CASCADE,
                 query TEXT NOT NULL,
                 clicks INTEGER NOT NULL,
@@ -68,7 +130,7 @@ def initialize_database() -> None:
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS gsc_page_rows (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 dataset_id INTEGER NOT NULL REFERENCES gsc_datasets(id) ON DELETE CASCADE,
                 page TEXT NOT NULL,
                 clicks INTEGER NOT NULL,
@@ -81,7 +143,7 @@ def initialize_database() -> None:
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS gsc_daily_rows (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 dataset_id INTEGER NOT NULL REFERENCES gsc_datasets(id) ON DELETE CASCADE,
                 date TEXT NOT NULL,
                 clicks INTEGER NOT NULL,
@@ -94,7 +156,7 @@ def initialize_database() -> None:
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS seo_changes (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 change_date TEXT NOT NULL,
                 page_url TEXT NOT NULL,
                 category TEXT NOT NULL,
@@ -196,9 +258,23 @@ def initialize_database() -> None:
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS target_keywords (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 keyword TEXT NOT NULL UNIQUE,
                 created_at TEXT NOT NULL
+            )
+            """
+        )
+
+        # Cached Google OAuth token for the Search Console API. A hosted
+        # deployment has no persistent local disk, so the one-time "Connect"
+        # flow (still run locally — it needs a real browser) saves its
+        # result here instead of a local file, and every deployment
+        # (including this same local machine) reads/refreshes it from here.
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS oauth_tokens (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                token_json TEXT NOT NULL
             )
             """
         )

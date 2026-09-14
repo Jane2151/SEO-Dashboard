@@ -2,13 +2,14 @@ from pathlib import Path
 
 # Project root is the parent of this utils/ folder.
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-DB_PATH = PROJECT_ROOT / "data" / "seo_dashboard.db"
 
-# OAuth client secret (downloaded from Google Cloud Console) and cached user
-# token for the Search Console API. Both are gitignored — never commit them.
+# OAuth client secret (downloaded from Google Cloud Console) — only ever
+# needed locally, for the one-time interactive "Connect" flow, which opens a
+# real browser and so can't run on a hosted deployment. The resulting user
+# token is cached in the shared database (oauth_token_repository), not here,
+# since a hosted deployment has no persistent local disk.
 CREDENTIALS_DIR = PROJECT_ROOT / "credentials"
 CLIENT_SECRET_PATH = CREDENTIALS_DIR / "client_secret.json"
-TOKEN_PATH = CREDENTIALS_DIR / "token.json"
 
 # This dashboard tracks a single Search Console property. Fetching is locked
 # to this site so data from any other verified property in the account never

@@ -2,21 +2,27 @@
 
 Authenticates as the user's own Google account rather than a service
 account: the first "Connect" click opens a browser for a one-time consent,
-after which the resulting token is cached to disk and silently refreshed on
-later runs. `fetch_query_performance` returns the same normalized shape as
+after which the resulting token is cached in the shared database (see
+oauth_token_repository) and silently refreshed on later runs — so any
+deployment reading that same database is connected without repeating the
+consent flow, which needs a real browser and so can only run locally.
+`fetch_query_performance` returns the same normalized shape as
 `csv_parser.parse_gsc_csv`, so a fetched dataset can be saved with
 `gsc_repository.save_dataset()` exactly like a manual upload.
 """
 
+import json
 from datetime import date, timedelta
 
 import pandas as pd
+from google.auth.exceptions import RefreshError
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 
-from utils.constants import CLIENT_SECRET_PATH, TOKEN_PATH
+from database import oauth_token_repository
+from utils.constants import CLIENT_SECRET_PATH
 
 # Read-only scope: this dashboard only ever reads performance data.
 SCOPES = ["https://www.googleapis.com/auth/webmasters.readonly"]
@@ -39,17 +45,29 @@ def get_credentials(interactive: bool = False):
     """Return valid cached OAuth credentials, or None if not yet connected.
 
     Only runs the interactive browser consent flow when interactive=True, so
-    a Streamlit rerun never pops a browser window on its own.
+    a Streamlit rerun never pops a browser window on its own. The token is
+    read from the shared database (not a local file), so a connection made
+    once — locally, since the interactive flow needs a real browser — is
+    immediately available to every deployment reading the same database.
     """
     creds = None
-    if TOKEN_PATH.exists():
-        creds = Credentials.from_authorized_user_file(str(TOKEN_PATH), SCOPES)
+    token_json = oauth_token_repository.get_token_json()
+    if token_json:
+        creds = Credentials.from_authorized_user_info(json.loads(token_json), SCOPES)
 
     if creds and creds.valid:
         return creds
 
     if creds and creds.expired and creds.refresh_token:
-        creds.refresh(Request())
+        try:
+            creds.refresh(Request())
+        except RefreshError:
+            # The refresh token itself is dead (revoked, or a Google Cloud
+            # OAuth consent screen still in "Testing" mode expires it after
+            # 7 days) — treat this exactly like "never connected" so the app
+            # shows the normal Connect button instead of crashing.
+            oauth_token_repository.delete_token()
+            return None
         _save_token(creds)
         return creds
 
@@ -75,13 +93,11 @@ def is_connected() -> bool:
 
 def disconnect() -> None:
     """Remove the cached token so the next connection re-prompts for consent."""
-    if TOKEN_PATH.exists():
-        TOKEN_PATH.unlink()
+    oauth_token_repository.delete_token()
 
 
 def _save_token(creds) -> None:
-    TOKEN_PATH.parent.mkdir(parents=True, exist_ok=True)
-    TOKEN_PATH.write_text(creds.to_json())
+    oauth_token_repository.save_token_json(creds.to_json())
 
 
 def build_service(creds):

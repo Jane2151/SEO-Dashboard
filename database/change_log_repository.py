@@ -19,7 +19,7 @@ def add_change(
         cursor = conn.execute(
             """INSERT INTO seo_changes
                (change_date, page_url, category, description, target_keyword, notes, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id""",
             (
                 change_date.isoformat(),
                 page_url,
@@ -30,7 +30,7 @@ def add_change(
                 datetime.now().isoformat(),
             ),
         )
-        return cursor.lastrowid
+        return cursor.fetchone()["id"]
 
 
 def list_changes() -> pd.DataFrame:
