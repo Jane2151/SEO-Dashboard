@@ -10,7 +10,7 @@ import streamlit as st
 
 from charts import plotly_charts
 from data_processing import metrics
-from database import change_log_repository, gsc_daily_repository
+from database import change_log_repository, gsc_daily_repository, target_keyword_repository
 from database.db_setup import initialize_database
 from utils.chart_style import inject_chart_transition_css
 from utils.date_ranges import select_range
@@ -202,6 +202,30 @@ with clicks_impressions_tab:
         st.info("Select Clicks or Impressions to display a chart.")
 
 with position_tab:
+    target_keywords_df = target_keyword_repository.list_target_keywords()
+    keyword_series = []
+    for row in target_keywords_df.itertuples(index=False):
+        keyword_daily = gsc_daily_repository.get_query_daily_position(row.keyword, range_start, range_end)
+        if not keyword_daily.empty:
+            keyword_series.append({"label": row.keyword, "x": keyword_daily["date"], "y": keyword_daily["position"]})
+
+    # The chart's categorical palette reserves one slot for the sitewide
+    # line, leaving 7 for keyword lines — past that, more lines would stop
+    # being visually distinguishable rather than just crowding the legend.
+    max_keyword_lines = 7
+    if len(keyword_series) > max_keyword_lines:
+        st.caption(
+            f"Showing {max_keyword_lines} of {len(keyword_series)} target keywords on the chart below — "
+            "too many to stay readable as separate lines."
+        )
+        keyword_series = keyword_series[:max_keyword_lines]
+
+    if keyword_series:
+        # The chart drops its own in-figure title when keyword lines are
+        # shown (it would fight the legend for the same space above the
+        # plot) — this heading replaces it.
+        st.markdown("**Average Position Over Time**")
+
     st.plotly_chart(
         plotly_charts.trend_line_chart_with_change_markers(
             current_daily["date"],
@@ -211,10 +235,13 @@ with position_tab:
             grouped_changes,
             invert_y=True,
             dark_mode=is_dark_theme,
+            keyword_series=keyword_series,
         ),
         width="stretch",
     )
     st.caption("Axis is inverted so an upward line always means better rankings.")
+    if keyword_series:
+        st.caption("Each colored line is one target keyword's own position — compare it against the change markers to see whether a specific action moved that keyword.")
 
 st.subheader("Breakdowns")
 

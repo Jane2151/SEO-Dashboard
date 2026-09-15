@@ -147,6 +147,19 @@ def get_query_stats(query_text: str, start_date: date, end_date: date) -> dict:
         }
 
 
+def get_query_daily_position(query_text: str, start_date: date, end_date: date) -> pd.DataFrame:
+    """Day-by-day position for one exact query (case-insensitive) — powers
+    the per-target-keyword lines on the Overview position chart. Sparse: a
+    day the query had no impressions simply has no row here, same as GSC
+    itself omits it from the API response that day."""
+    with get_connection() as conn:
+        return pd.read_sql_query(
+            "SELECT date, position FROM gsc_daily_query WHERE LOWER(query) = LOWER(?) AND date BETWEEN ? AND ? ORDER BY date",
+            conn,
+            params=(query_text.strip(), start_date.isoformat(), end_date.isoformat()),
+        )
+
+
 def get_latest_synced_date():
     """Most recent date with any daily-overall data, or None if never synced."""
     with get_connection() as conn:

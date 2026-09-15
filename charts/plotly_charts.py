@@ -10,6 +10,13 @@ import plotly.graph_objects as go
 CLICKS_COLOR = "#1f77b4"
 IMPRESSIONS_COLOR = "#9467bd"
 
+# Categorical palette (validated: CVD-safe adjacent pairs in both light and
+# dark mode — see the dataviz skill's reference palette). Fixed hue order,
+# never cycled: slot 0 is the site-wide line, slots 1+ go to individual
+# target keyword lines in the order they're given.
+KEYWORD_LINE_COLORS_LIGHT = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#4a3aa7", "#e34948"]
+KEYWORD_LINE_COLORS_DARK = ["#3987e5", "#d95926", "#199e70", "#c98500", "#d55181", "#008300", "#9085e9", "#e66767"]
+
 
 def _nice_axis_ticks(max_val, n_ticks: int = 6) -> list:
     """n_ticks evenly-spaced round values from 0 up to at least max_val
@@ -113,6 +120,7 @@ def trend_line_chart_with_change_markers(
     x_range=None,
     dark_mode: bool = False,
     line_color: str | None = None,
+    keyword_series: list[dict] | None = None,
 ) -> go.Figure:
     """Single-metric trend line with SEO Change Log entries overlaid as
     vertical markers — one thin dashed line per change date, spanning the
@@ -125,22 +133,32 @@ def trend_line_chart_with_change_markers(
     the same x_values, and the same x_range keeps the marker at the same
     date lined up across charts. This is a visual reference only — it does
     not imply the change caused whatever the metric did afterward.
+
+    keyword_series, when given, overlays one additional line per target
+    keyword (each {"label", "x", "y"}) in a fixed categorical color order
+    (KEYWORD_LINE_COLORS_*) — so a change aimed at one keyword can be traced
+    against that keyword's own line instead of only the sitewide average.
+    Capped at 7 keywords (the palette's non-site-average slots); callers
+    should trim the list themselves and note any overflow to the user.
     """
     x_values = list(x_values)
     y_values = list(y_values)
     date_index = {x: i for i, x in enumerate(x_values)}
+    palette = KEYWORD_LINE_COLORS_DARK if dark_mode else KEYWORD_LINE_COLORS_LIGHT
 
     fig = trend_line_chart(
         x_values,
         y_values,
-        title,
+        "" if keyword_series else title,
         y_title,
         invert_y=invert_y,
         show_x_labels=show_x_labels,
         x_range=x_range,
         dark_mode=dark_mode,
-        line_color=line_color,
+        line_color=line_color or (palette[0] if keyword_series else None),
     )
+    if keyword_series:
+        fig.data[0].name = "Site Average"
 
     for change_date, entries in changes:
         fig.add_shape(
@@ -172,6 +190,51 @@ def trend_line_chart_with_change_markers(
                 name="SEO Change",
                 showlegend=False,
             )
+        )
+
+    for i, series in enumerate(keyword_series or [], start=1):
+        color = palette[i % len(palette)]
+        series_x = list(series["x"])
+        series_y = list(series["y"])
+        fig.add_trace(
+            go.Scatter(
+                x=series_x,
+                y=series_y,
+                mode="lines+markers",
+                name=series["label"],
+                line=dict(color=color, width=2),
+                marker=dict(size=6, color=color),
+                connectgaps=True,
+            )
+        )
+        # A direct label at the line's last point — not just a legend swatch —
+        # since a couple of this palette's slots dip below 3:1 contrast on the
+        # light surface, and the dataviz palette's relief rule requires a
+        # visible label wherever that happens, not color alone.
+        if series_x:
+            fig.add_annotation(
+                x=series_x[-1],
+                y=series_y[-1],
+                text=series["label"],
+                showarrow=False,
+                xanchor="left",
+                xshift=8,
+                font=dict(color=color, size=11),
+            )
+
+    if keyword_series:
+        # Widen the right margin to fit the longest keyword's end-of-line
+        # label — the default 20px margin only suits a chart with no labels
+        # past the last point. The in-figure title is dropped in favor of a
+        # page-level heading (see the caller) — the title and the legend
+        # both want the same sliver of space above the plot, and titling
+        # from Streamlit instead avoids fighting over it.
+        longest_label = max(len(series["label"]) for series in keyword_series)
+        right_margin = min(260, max(20, 8 * longest_label + 20))
+        fig.update_layout(
+            showlegend=True,
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+            margin=dict(r=right_margin, t=20),
         )
 
     fig.update_layout(hovermode="x unified")
