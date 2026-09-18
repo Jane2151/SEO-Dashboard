@@ -7,7 +7,7 @@ keyed by date (or date + dimension), so re-syncing never creates duplicates
 and always overwrites with Google's latest reported value.
 """
 
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 
 import pandas as pd
 
@@ -41,7 +41,7 @@ def upsert_daily_overall(df: pd.DataFrame) -> None:
     should ever read from."""
     if df.empty:
         return
-    synced_at = datetime.now().isoformat()
+    synced_at = datetime.now(timezone.utc).isoformat()
     with get_connection() as conn:
         rows = [
             (row.date, int(row.clicks), int(row.impressions), float(row.ctr), float(row.position), synced_at)
@@ -205,9 +205,13 @@ def set_latest_complete_date(complete_date: date) -> None:
 
 
 def set_last_sync_time() -> None:
+    """Records the sync time in UTC (unambiguous regardless of which
+    timezone the server process happens to run in — local dev machine or
+    Streamlit Cloud's container) — callers convert to the viewer's own
+    timezone for display via utils.time_format."""
     with get_connection() as conn:
         conn.execute(
             """INSERT INTO sync_state (id, last_synced_at) VALUES (1, ?)
                ON CONFLICT(id) DO UPDATE SET last_synced_at = excluded.last_synced_at""",
-            (datetime.now().isoformat(),),
+            (datetime.now(timezone.utc).isoformat(),),
         )

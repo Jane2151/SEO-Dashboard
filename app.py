@@ -5,8 +5,6 @@ reads entirely from the daily-level tables this page syncs into. There's no
 manual per-date-range dataset step anymore: connect once, then Sync.
 """
 
-from datetime import datetime
-
 import streamlit as st
 
 from data_processing import gsc_api_client, gsc_sync
@@ -14,6 +12,7 @@ from database import gsc_daily_repository
 from database.db_setup import initialize_database
 from utils.constants import TARGET_SITE_URL
 from utils.text_style import styled_caption
+from utils.time_format import format_local_timestamp
 
 st.set_page_config(page_title="SEO Performance Dashboard", layout="wide")
 initialize_database()
@@ -68,7 +67,7 @@ st.caption(
 
 last_synced_at = gsc_daily_repository.get_last_sync_time()
 if last_synced_at:
-    formatted_sync_time = datetime.fromisoformat(last_synced_at).strftime("%b %d, %Y %I:%M %p")
+    formatted_sync_time = format_local_timestamp(last_synced_at)
     styled_caption(f"Last synced: {formatted_sync_time}")
 else:
     styled_caption("Never synced yet. First sync backfills the last 90 days.")
