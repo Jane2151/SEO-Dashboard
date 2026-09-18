@@ -106,19 +106,9 @@ else:
 
         card_key = f"tk_card_{trend_label.lower().replace(' ', '_')}_{position}"
         with card_cols[position % len(card_cols)].container(border=True, key=card_key):
+            # Keyword name only, no metrics or caption — the card's color
+            # already signals the trend on its own.
             st.markdown(f"**{keyword_row.keyword}**")
-            if stats["impressions"] == 0:
-                pass
-            elif trend_label == "Not enough history":
-                # No metrics or caption here — there's no previous period to
-                # compare against yet, and the card's yellow color already
-                # signals the "not enough history" state on its own.
-                pass
-            else:
-                st.metric("Impressions", f"{stats['impressions']:,}")
-                st.metric("Clicks", f"{stats['clicks']:,}")
-                st.metric("CTR", f"{stats['ctr'] * 100:.1f}%")
-                st.metric("Avg Position", f"{stats['position']:.1f}")
 
 st.divider()
 st.subheader("Current User Search Queries")
