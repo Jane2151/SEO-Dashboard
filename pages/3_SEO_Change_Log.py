@@ -52,7 +52,20 @@ else:
         display_df,
         width="stretch",
         hide_index=True,
-        column_config={"category": st.column_config.MultiselectColumn("Category", options=CHANGE_CATEGORIES, width=500)},
+        # id and created_at are bookkeeping, not about the change itself —
+        # dropped so the remaining columns fit without a horizontal scroll,
+        # which reset (and so had to be redone) on every rerun anyway. Full
+        # detail, including these two, is still available by picking the
+        # entry below.
+        column_order=["change_date", "category", "target_keyword", "description", "page_url", "notes"],
+        column_config={
+            "change_date": st.column_config.TextColumn("Date", width="small"),
+            "category": st.column_config.MultiselectColumn("Category", options=CHANGE_CATEGORIES, width=220),
+            "target_keyword": st.column_config.TextColumn("Target Keyword", width=130),
+            "description": st.column_config.TextColumn("Description", width=220),
+            "page_url": st.column_config.TextColumn("Page URL", width=180),
+            "notes": st.column_config.TextColumn("Notes", width=180),
+        },
     )
 
     st.subheader("Edit or Delete an Entry")
