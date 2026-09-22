@@ -54,23 +54,37 @@ else:
     # gets truncated itself.
     display_df["page_url"] = display_df["page_url"].apply(lambda u: (urlparse(u).path or "/") if u else u)
 
+    extra_cols = st.columns(3)
+    show_target_keyword = extra_cols[0].checkbox("Target Keyword")
+    show_page_url = extra_cols[1].checkbox("Page URL")
+    show_notes = extra_cols[2].checkbox("Notes")
+
+    column_order = ["id", "change_date", "category", "description"]
+    if show_target_keyword:
+        column_order.append("target_keyword")
+    if show_page_url:
+        column_order.append("page_url")
+    if show_notes:
+        column_order.append("notes")
+
     st.dataframe(
         display_df,
         width="stretch",
         hide_index=True,
-        # id and created_at are bookkeeping, not about the change itself —
-        # dropped so the remaining columns fit without a horizontal scroll,
-        # which reset (and so had to be redone) on every rerun anyway. Full
-        # detail, including these two, is still available by picking the
-        # entry below.
-        column_order=["change_date", "category", "target_keyword", "description", "page_url", "notes"],
+        # created_at is pure bookkeeping, not about the change itself — the
+        # rest default to hidden too and only join the table via the
+        # checkboxes above, so the default view never needs a horizontal
+        # scroll (which reset on every rerun anyway). Full detail is always
+        # available by picking the entry below regardless of what's ticked.
+        column_order=column_order,
         column_config={
+            "id": st.column_config.NumberColumn("ID", width="small"),
             "change_date": st.column_config.TextColumn("Date", width="small"),
-            "category": st.column_config.MultiselectColumn("Category", options=CHANGE_CATEGORIES, width=200),
-            "target_keyword": st.column_config.TextColumn("Target Keyword", width=100),
-            "description": st.column_config.TextColumn("Description", width=270),
-            "page_url": st.column_config.TextColumn("Page URL (path)", width=130),
-            "notes": st.column_config.TextColumn("Notes", width=80),
+            "category": st.column_config.MultiselectColumn("Category", options=CHANGE_CATEGORIES, width=230),
+            "description": st.column_config.TextColumn("Description", width=350),
+            "target_keyword": st.column_config.TextColumn("Target Keyword", width=130),
+            "page_url": st.column_config.TextColumn("Page URL (path)", width=150),
+            "notes": st.column_config.TextColumn("Notes", width=200),
         },
     )
 
