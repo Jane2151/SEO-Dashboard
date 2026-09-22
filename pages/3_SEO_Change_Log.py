@@ -1,6 +1,7 @@
 """SEO Change Log: manually record SEO actions taken on the site."""
 
 from datetime import date
+from urllib.parse import urlparse
 
 import streamlit as st
 
@@ -47,6 +48,11 @@ else:
     # truncated string.
     display_df = changes_df.copy()
     display_df["category"] = display_df["category"].apply(lambda c: [part.strip() for part in (c or "").split(",") if part.strip()])
+    # Every entry is on the same site, so the domain is repeated noise —
+    # showing just the path frees up real width for the page url column,
+    # which otherwise crowds out Description (the more useful field) or
+    # gets truncated itself.
+    display_df["page_url"] = display_df["page_url"].apply(lambda u: (urlparse(u).path or "/") if u else u)
 
     st.dataframe(
         display_df,
@@ -60,11 +66,11 @@ else:
         column_order=["change_date", "category", "target_keyword", "description", "page_url", "notes"],
         column_config={
             "change_date": st.column_config.TextColumn("Date", width="small"),
-            "category": st.column_config.MultiselectColumn("Category", options=CHANGE_CATEGORIES, width=220),
-            "target_keyword": st.column_config.TextColumn("Target Keyword", width=130),
-            "description": st.column_config.TextColumn("Description", width=220),
-            "page_url": st.column_config.TextColumn("Page URL", width=180),
-            "notes": st.column_config.TextColumn("Notes", width=180),
+            "category": st.column_config.MultiselectColumn("Category", options=CHANGE_CATEGORIES, width=200),
+            "target_keyword": st.column_config.TextColumn("Target Keyword", width=100),
+            "description": st.column_config.TextColumn("Description", width=270),
+            "page_url": st.column_config.TextColumn("Page URL (path)", width=130),
+            "notes": st.column_config.TextColumn("Notes", width=80),
         },
     )
 
